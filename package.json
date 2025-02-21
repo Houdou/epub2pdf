@@ -1,0 +1,16 @@
+{
+  "name": "epub2pdf",
+  "version": "1.0.0",
+  "description": "Convert EPUB files containing scanned images to PDF",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "epub": "^1.2.1",
+    "image-size": "^1.0.2",
+    "pdfkit": "^0.13.0"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}
