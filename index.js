@@ -7,9 +7,11 @@ const util = require('util');
 const cheerio = require('cheerio');
 
 if (process.argv.length < 3) {
-    console.error('Usage: node index.js <path-to-epub-file>');
+    console.error('Usage: node index.js <path-to-epub-file> [margin]');
     process.exit(1);
 }
+
+const margin = process.argv[3] ? parseInt(process.argv[3], 10) : 0;
 
 const epubPath = process.argv[2];
 const outputPath = path.join(
@@ -57,21 +59,98 @@ async function processPDF() {
             epub.toc.forEach(processTocItem);
         }
 
+        let size = [210, 297];
+
+        // Find the size by checking the most common image size
+        const imageSizes = new Map(); // Map to store size frequencies
+        const sizePromises = [];
         const itemRefs = epub.spine.contents.map(item => item.id);
-        const doc = new PDFDocument();
+
+        // Collect all image files from all chapters
+        for (const chapterId of itemRefs) {
+            try {
+                const text = await getChapterRawAsync(epub, chapterId);
+                const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
+                let match;
+
+                while ((match = imgRegex.exec(text)) !== null) {
+                    let imgSrc = match[1].replace(/^\.\//, '');
+                    sizePromises.push(
+                        getImageAsync(epub, imgSrc).then(image => {
+                            const dimensions = sizeOf(image);
+                            const sizeKey = `${dimensions.width},${dimensions.height}`;
+                            imageSizes.set(sizeKey, (imageSizes.get(sizeKey) || 0) + 1);
+                        }).catch(error => {
+                            console.error(`Error processing image size for ${imgSrc}:`, error);
+                        })
+                    );
+                }
+            } catch (error) {
+                console.error(`Error analyzing chapter ${chapterId}:`, error);
+            }
+        }
+
+        // Wait for all image size calculations
+        await Promise.all(sizePromises);
+
+        // Find the most common image size
+        let maxCount = 0;
+        let mostCommonSize = null;
+
+        for (const [sizeKey, count] of imageSizes) {
+            if (count > maxCount) {
+                maxCount = count;
+                mostCommonSize = sizeKey;
+            }
+        }
+
+        // Set PDF size based on most common image size
+        if (mostCommonSize) {
+            const [width, height] = mostCommonSize.split(',').map(Number);
+            size = [width, height];
+        }
+
+        const doc = new PDFDocument({
+            size: size,
+            autoFirstPage: true
+        });
         const output = fs.createWriteStream(outputPath);
         doc.pipe(output);
 
         // Create top-level bookmark outline
         const outline = doc.outline;
 
-        let isFirstImage = true;
+        // Add cover page
+        if (epub.metadata.cover) {
+            try {
+                const coverImage = await getImageAsync(epub, epub.metadata.cover);
+                const dimensions = sizeOf(coverImage);
+
+                // Fit cover to page while maintaining aspect ratio
+                const pageWidth = doc.page.width - (margin * 2);
+                const pageHeight = doc.page.height - (margin * 2);
+                const scale = Math.min(pageWidth / dimensions.width, pageHeight / dimensions.height);
+                const width = dimensions.width * scale;
+                const height = dimensions.height * scale;
+                const x = (doc.page.width - width) / 2;
+                const y = (doc.page.height - height) / 2;
+
+                // Add cover image to PDF
+                doc.image(coverImage, x, y, {
+                    width: width,
+                    height: height
+                });
+            } catch (error) {
+                console.error('Error processing cover image:', error);
+            }
+        }
+
         for (const chapterId of itemRefs) {
             try {
                 const text = await getChapterRawAsync(epub, chapterId);
                 const $ = cheerio.load(text);
                 const chapterPath = epub.manifest[chapterId].href;
-                
+
                 let chapterBookmarkAdded = false;
 
                 const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
@@ -84,17 +163,16 @@ async function processPDF() {
                     imagesInChapter.push(imgSrc);
                 }
 
-                let currentIsFirst = isFirstImage;
                 for (const imageFile of imagesInChapter) {
                     try {
                         const image = await getImageAsync(epub, imageFile);
                         const dimensions = sizeOf(image);
 
-                        if (!currentIsFirst) doc.addPage();
+                        doc.addPage();
 
                         // Fit image to page while maintaining aspect ratio
-                        const pageWidth = doc.page.width - 40; // 20px margin on each side
-                        const pageHeight = doc.page.height - 40; // 20px margin on top and bottom
+                        const pageWidth = doc.page.width - (margin * 2); // Apply margin on both sides
+                        const pageHeight = doc.page.height - (margin * 2); // Apply margin on top and bottom
                         const scale = Math.min(pageWidth / dimensions.width, pageHeight / dimensions.height);
                         const width = dimensions.width * scale;
                         const height = dimensions.height * scale;
