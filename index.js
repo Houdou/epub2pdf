@@ -70,21 +70,46 @@ async function processPDF() {
         for (const chapterId of itemRefs) {
             try {
                 const text = await getChapterRawAsync(epub, chapterId);
-                const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
-                let match;
+                {
+                    // case 1
+                    const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
+                    let match;
 
-                while ((match = imgRegex.exec(text)) !== null) {
-                    let imgSrc = match[1].replace(/^\.\//, '');
-                    sizePromises.push(
-                        getImageAsync(epub, imgSrc).then(image => {
-                            const dimensions = sizeOf(image);
-                            const sizeKey = `${dimensions.width},${dimensions.height}`;
-                            imageSizes.set(sizeKey, (imageSizes.get(sizeKey) || 0) + 1);
-                        }).catch(error => {
-                            console.error(`Error processing image size for ${imgSrc}:`, error);
-                        })
-                    );
+                    while ((match = imgRegex.exec(text)) !== null) {
+                        let imgSrc = match[1].replace(/^\.\//, '');
+                        sizePromises.push(
+                            getImageAsync(epub, imgSrc).then(image => {
+                                const dimensions = sizeOf(image);
+                                const sizeKey = `${dimensions.width},${dimensions.height}`;
+                                imageSizes.set(sizeKey, (imageSizes.get(sizeKey) || 0) + 1);
+                            }).catch(error => {
+                                console.error(`Error processing image size for ${imgSrc}:`, error);
+                            })
+                        );
+                    }
                 }
+                {
+                    // case 2
+                    // <image width="1266" height="1600" xlink:href="../images/00105.jpeg" amzn-src-id="1049"/>
+                    const imgRegex = /<image[^>]+xlink:href="([^"]+)"[^>]*>/g;
+                    let match;
+
+                    while ((match = imgRegex.exec(text)) !== null) {
+                        let imgSrc = match[1].replace(/^\.\.\//, '');
+                        let imgId = Object.values(epub.manifest).find(item => item.href === imgSrc).id;
+
+                        sizePromises.push(
+                            getImageAsync(epub, imgId).then(image => {
+                                const dimensions = sizeOf(image);
+                                const sizeKey = `${dimensions.width},${dimensions.height}`;
+                                imageSizes.set(sizeKey, (imageSizes.get(sizeKey) || 0) + 1);
+                            }).catch(error => {
+                                console.error(`Error processing image size for ${imgId}:`, error);
+                            })
+                        );
+                    }
+                }
+
             } catch (error) {
                 console.error(`Error analyzing chapter ${chapterId}:`, error);
             }
@@ -153,14 +178,29 @@ async function processPDF() {
 
                 let chapterBookmarkAdded = false;
 
-                const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
                 const imagesInChapter = [];
-                let match;
+                {
+                    // case 1
+                    const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
+                    let match;
 
-                while ((match = imgRegex.exec(text)) !== null) {
-                    let imgSrc = match[1];
-                    imgSrc = imgSrc.replace(/^\.\//, '');
-                    imagesInChapter.push(imgSrc);
+                    while ((match = imgRegex.exec(text)) !== null) {
+                        let imgSrc = match[1];
+                        imgSrc = imgSrc.replace(/^\.\//, '');
+                        imagesInChapter.push(imgSrc);
+                    }
+                }
+                {
+                    // case 2
+                    const imgRegex = /<image[^>]+xlink:href="([^"]+)"[^>]*>/g;
+                    let match;
+
+                    while ((match = imgRegex.exec(text)) !== null) {
+                        let imgSrc = match[1];
+                        imgSrc = imgSrc.replace(/^\.\.\//, '');
+                        let imgId = Object.values(epub.manifest).find(item => item.href === imgSrc).id;
+                        imagesInChapter.push(imgId);
+                    }
                 }
 
                 for (const imageFile of imagesInChapter) {
